@@ -11,7 +11,7 @@ from iree.compiler import ir  # type: ignore
 from iree.compiler.dialects import iree_codegen, iree_gpu  # type: ignore
 
 from amdsharktuner import common
-from amdsharktuner.rocm import rocm_dispatch_constraints
+from amdsharktuner.rocm import rocm_dispatch_constraints, rocm_solutions
 
 from amdsharktuner.test_utils import tuner_ctx
 
@@ -591,3 +591,43 @@ def test_generate_vector_distribute_compilation_infos(
     assert (
         "mma_kind = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16>" in compilation_info_str
     )
+
+
+def test_denorm_flushing_rejected_for_tile_and_fuse(
+    tuner_ctx: common.TunerContext, gpu_target_info: iree_gpu.TargetInfo
+) -> None:
+    """Verify that denorm flushing raises ValueError for TileAndFuse pipeline."""
+    f16 = ir.F16Type.get(context=tuner_ctx.mlir_ctx)
+    f32 = ir.F32Type.get(context=tuner_ctx.mlir_ctx)
+    lhs_type = common.ShapedType([128, 128], f16)
+    rhs_type = common.ShapedType([128, 128], f16)
+    res_type = common.ShapedType([128, 128], f32)
+
+    d0, d1, d2 = [
+        ir.AffineExpr.get_dim(i, context=tuner_ctx.mlir_ctx) for i in range(3)
+    ]
+    indexing_maps = [
+        ir.AffineMap.get(3, 0, [d0, d2], context=tuner_ctx.mlir_ctx),
+        ir.AffineMap.get(3, 0, [d2, d1], context=tuner_ctx.mlir_ctx),
+        ir.AffineMap.get(3, 0, [d0, d1], context=tuner_ctx.mlir_ctx),
+    ]
+
+    with pytest.raises(ValueError, match="Denorm flushing is only supported"):
+        # Must consume the generator to trigger the ValueError.
+        list(
+            rocm_solutions.generate_generic_contraction_solutions(
+                tuner_ctx=tuner_ctx,
+                gpu_target_info=gpu_target_info,
+                contraction_dims=common.ContractionDimensions(
+                    batch=[], m=[0], n=[1], k=[2]
+                ),
+                matmul_size=common.ContractionSizes(M=128, N=128, K=128),
+                lhs_type=lhs_type,
+                rhs_type=rhs_type,
+                res_type=res_type,
+                dispatch_kind=common.DispatchKind.contraction,
+                indexing_maps=indexing_maps,
+                codegen_pipeline=iree_codegen.DispatchLoweringPassPipeline.LLVMGPUTileAndFuse,
+                allowed_denorm_flushing=[True],
+            )
+        )

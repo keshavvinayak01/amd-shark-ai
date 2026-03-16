@@ -132,6 +132,16 @@ def generate_generic_contraction_solutions(
     direct_conv_info: Optional[DirectConvInfo] = None,
 ) -> Iterator[list[common.TuningConfiguration]]:
 
+    # Denorm flushing is only supported for the VectorDistribute pipeline.
+    if (
+        codegen_pipeline == iree_codegen.DispatchLoweringPassPipeline.LLVMGPUTileAndFuse
+        and any(allowed_denorm_flushing)
+    ):
+        raise ValueError(
+            "Denorm flushing is only supported for the VectorDistribute pipeline, "
+            "not TileAndFuse."
+        )
+
     # Set use_igemm_convolution based on strategy for TileAndFuse pipeline.
     # - IGEMM convolution: igemm_details is provided → use_igemm_convolution = True.
     # - Direct convolution: direct_conv_info is provided → use_igemm_convolution = False.
@@ -377,7 +387,6 @@ def generate_generic_contraction_solutions(
                         allowed_waves_per_eu,
                         padding=padding,
                         padding_conv=padding_conv,
-                        allowed_denorm_flushing=allowed_denorm_flushing,
                     )
                 )
             case iree_codegen.DispatchLoweringPassPipeline.LLVMGPUVectorDistribute:
